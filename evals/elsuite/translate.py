@@ -4,13 +4,14 @@ from sacrebleu.metrics.bleu import BLEU
 
 import evals
 import evals.metrics
+from evals.api import CompletionFn
 from evals.prompt.base import is_chat_prompt
 
 
 class Translate(evals.Eval):
     def __init__(
         self,
-        model_specs: evals.ModelSpecs,
+        completion_fns: list[CompletionFn],
         samples_jsonl: str,
         *args,
         max_tokens: int = 500,
@@ -18,7 +19,8 @@ class Translate(evals.Eval):
         few_shot_jsonl: str = None,
         **kwargs,
     ):
-        super().__init__(model_specs, *args, **kwargs)
+        super().__init__(completion_fns, *args, **kwargs)
+        assert len(completion_fns) == 1, "Translate only supports one completion fn"
         self.max_tokens = max_tokens
         self.samples_jsonl = samples_jsonl
 
@@ -26,7 +28,7 @@ class Translate(evals.Eval):
         if self.num_few_shot > 0:
             assert few_shot_jsonl is not None, "few shot requires few shot sample dataset"
             self.few_shot_jsonl = few_shot_jsonl
-            self.few_shot = evals.get_jsonl(self.few_shot_jsonl)
+            self.few_shot = evals.get_jsonl(self._prefix_registry_path(self.few_shot_jsonl))
 
         self.bleu = BLEU(effective_order=True)
 
@@ -45,7 +47,11 @@ class Translate(evals.Eval):
         elif not isinstance(expected, list):
             expected = [expected]
 
-        sampled = evals.sample_freeform(self.model_spec, prompt, max_tokens=self.max_tokens)
+        result = self.completion_fn(
+            prompt=prompt,
+            max_tokens=self.max_tokens,
+        )
+        sampled = result.get_completions()[0]
 
         score = None
         if expected is not None:
@@ -61,7 +67,7 @@ class Translate(evals.Eval):
             return match
 
     def run(self, recorder):
-        samples = evals.get_jsonl(self.samples_jsonl)
+        samples = self.get_samples()
         self.eval_all_samples(recorder, samples)
         events = recorder.get_events("match")
 
